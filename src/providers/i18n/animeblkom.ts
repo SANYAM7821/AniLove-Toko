@@ -12,24 +12,29 @@
  * Arabic via getLanguages() so the Tatakai language engine can select it.
  */
 // Worker sandbox globals.
+declare const __tatakai_fetch__: (url: string, init?: RequestInit) => Promise<Response>;
+declare const __tatakai_parse_html__: (html: string) => any;
 
-import { BaseI18nProvider, type RawDubSource } from '../base/base-i18n-provider.js';
+import { BaseI18nProvider, type RawDubSource } from './base-i18n-provider.js';
 
-import { fetchTextWithBypass } from '../../utils/common/fetch-bypass.js';
-import { loadHtml } from '../../utils/http/fetch.js';
 const BASE = 'https://animeblkom.net';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36';
 
 async function fetchHtml(url: string, referer: string = BASE): Promise<string | null> {
-  return fetchTextWithBypass(url, {
-    headers: {
-      'User-Agent': UA,
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'ar,en;q=0.6',
-      Referer: referer,
-    },
-    timeoutMs: 12000,
-  });
+  try {
+    const res = await __tatakai_fetch__(url, {
+      headers: {
+        'User-Agent': UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ar,en;q=0.6',
+        Referer: referer,
+      },
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
 }
 
 function absolute(href: string): string {
@@ -51,7 +56,7 @@ function scoreTitle(query: string, candidate: string): number {
 }
 
 function extractSlug(html: string, query: string): string | null {
-  const $ = loadHtml(html);
+  const $ = __tatakai_parse_html__(html);
   const candidates: { slug: string; title: string; score: number }[] = [];
 
   $.find("a[href*='/anime/']").each((_: number, el: any) => {
@@ -69,7 +74,7 @@ function extractSlug(html: string, query: string): string | null {
 }
 
 function extractServerSources(html: string, pageUrl: string): RawDubSource[] {
-  const $ = loadHtml(html);
+  const $ = __tatakai_parse_html__(html);
   const out: RawDubSource[] = [];
   const seen = new Set<string>();
 
@@ -133,7 +138,6 @@ function extractServerSources(html: string, pageUrl: string): RawDubSource[] {
 
 export class AnimeblkomProvider extends BaseI18nProvider {
   readonly name = 'animeblkom';
-  readonly sites = [BASE];
   readonly meta = {
     name: 'Animeblkom',
     languages: ['ar'],
@@ -147,11 +151,7 @@ export class AnimeblkomProvider extends BaseI18nProvider {
 
     for (const query of queries) {
       // 1. Search → slug
-      let searchHtml: string | null = null;
-      for (const path of [`/search?query=${encodeURIComponent(query)}`, `/search?q=${encodeURIComponent(query)}`, `/anime-list?search=${encodeURIComponent(query)}`]) {
-        searchHtml = await fetchHtml(`${BASE}${path}`);
-        if (searchHtml && searchHtml.includes('/anime/')) break;
-      }
+      const searchHtml = await fetchHtml(`${BASE}/search?q=${encodeURIComponent(query)}`);
       if (!searchHtml) continue;
       const slug = extractSlug(searchHtml, query);
       if (!slug) continue;
