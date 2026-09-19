@@ -508,6 +508,19 @@ async function handleSourceRequest(req, res, mode) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
+/** Root — Friendly status message */
+app.get('/', (_req, res) => {
+  res.json({
+    status: "Toko API is running",
+    documentation: "https://github.com/SANYAM7821/AniLove-Toko",
+    endpoints: {
+      health: "/api/v3/health",
+      streams: "/api/v3/toko/stream",
+      torrents: "/api/v3/toko/torrent"
+    }
+  });
+});
+
 /** GET /api/v3/toko/stream — stream sources only */
 app.get('/api/v3/toko/stream', async (req, res) => {
   try { await handleSourceRequest(req, res, 'stream'); }
