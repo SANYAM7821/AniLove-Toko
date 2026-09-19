@@ -17,9 +17,10 @@ RUN npm run build
 # Final Stage
 FROM node:22-slim
 
-# Install Chromium and necessary system libraries for Puppeteer
+# Install Chromium and necessary system libraries for Puppeteer, plus Xvfb for headful scraping
 RUN apt-get update && apt-get install -y \
     chromium \
+    xvfb \
     libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
