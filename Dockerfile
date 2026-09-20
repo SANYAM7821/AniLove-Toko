@@ -1,23 +1,29 @@
-# Use Node 22 slim as the base for building and running
+# --- Stage 1: Build & Dependency Preparation ---
 FROM node:22-slim AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Copy root package files and install ALL dependencies (including devDeps for build)
+# Copy root package files and install ALL dependencies
 COPY package*.json ./
 RUN npm install
 
-# Copy the entire project for the build step
+# Copy the entire project and build the bundle
 COPY . .
-
-# Build the project (generates dist/bundle.js)
 RUN npm run build
 
-# Final Stage
+# Remove devDependencies and install only production for root
+RUN npm prune --production
+
+# Prepare API production dependencies
+WORKDIR /app/api
+COPY api/package*.json ./
+RUN npm install --omit=dev
+
+
+# --- Stage 2: Final Production Image ---
 FROM node:22-slim
 
-# Install Chromium and necessary system libraries for Puppeteer, plus Xvfb for headful scraping
+# Install Chromium and minimal system libraries
 RUN apt-get update && apt-get install -y \
     chromium \
     xvfb \
@@ -31,12 +37,20 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libgbm1 \
     libasound2 \
-    libpangocairo-1.0-0 \
-    libxshmfence1 \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Environment Variables for Puppeteer and the API
+WORKDIR /app
+
+# Copy only the necessary production files from builder
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/api/package.json ./api/
+COPY --from=builder /app/api/node_modules ./api/node_modules
+COPY --from=builder /app/api/src ./api/src
+
+# Set Environment Variables
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     CHROME_PATH=/usr/bin/chromium \
@@ -44,26 +58,7 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PORT=8099 \
     NODE_ENV=production
 
-WORKDIR /app
-
-# Copy root package files and install production dependencies
-COPY package*.json ./
-RUN npm install --omit=dev
-
-# Copy API package files and install its dependencies
-COPY api/package*.json ./api/
-RUN cd api && npm install --omit=dev
-
-# Copy the built bundle from the builder stage
-COPY --from=builder /app/dist ./dist
-
-# Copy the API source code
-COPY api/src ./api/src
-
-# Expose the API port
 EXPOSE 8099
 
-# Start the server
-# The server looks for ../../dist/bundle.js relative to api/src/server.js,
-# which correctly resolves to /app/dist/bundle.js
+# Start with a direct node command
 CMD ["node", "api/src/server.js"]
