@@ -416,7 +416,9 @@ app.use(express.json({ limit: '2mb' }));
 // ── Health ────────────────────────────────────────────────────────────────────
 
 app.get('/api/v3/health', (_req, res) => {
-  res.json({ ok: true, service: 'toko-api', toko: !!getToko(), cacheSize: cache.size });
+  const isTokoLoaded = !!toko;
+  console.log(`[toko-api] Health check pinged - Toko Loaded: ${isTokoLoaded}`);
+  res.json({ ok: true, service: 'toko-api', toko: isTokoLoaded, cacheSize: cache.size });
 });
 
 // ── Generic progressive handler ───────────────────────────────────────────────
