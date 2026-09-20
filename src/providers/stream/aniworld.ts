@@ -77,7 +77,8 @@ async function extractStreamFromHoster(hosterUrl: string): Promise<string | null
         Referer: BASE_URL,
         'User-Agent': UA,
       },
-      timeoutMs: 6000,
+      timeoutMs: 12000,
+      bypassTimeoutMs: 45000,
     });
     if (!html) return null;
 
@@ -169,7 +170,8 @@ async function _aniworldSingle(opts: SourceOptions, signal: AbortSignal): Promis
 
             const html = await fetchTextWithBypass(watchUrl, {
               headers: { 'User-Agent': UA, Referer: `${BASE_URL}/` },
-              timeoutMs: 6000,
+              timeoutMs: 12000,
+              bypassTimeoutMs: 45000,
             });
 
             if (!html) continue;

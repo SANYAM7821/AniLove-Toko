@@ -7,6 +7,7 @@ import { buildSearchQueries, scoreMatch } from '../../utils/scraping/title-norma
 import type { StreamProvider, SourceOptions, SourceResult } from '../../types/index.js';
 
 import { fetchResponse, loadHtml } from '../../utils/http/fetch.js';
+import { fetchTextWithBypass, fetchJsonWithBypass } from '../../utils/common/fetch-bypass.js';
 
 const BASE_URL = 'https://www.desidubanime.me';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -68,35 +69,29 @@ async function findSources(titles: string[], epNumber: number): Promise<SourceRe
 
         // 1. WP REST API search (fast)
         try {
-          const apiRes = await fetchResponse(
+          const apiJson = await fetchJsonWithBypass<any[]>(
             `${base}/wp-json/wp/v2/anime?search=${encodeURIComponent(query)}&per_page=10`,
-            { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(5000) } as RequestInit,
+            { headers: { 'User-Agent': UA }, timeoutMs: 6000, bypassTimeoutMs: 30000 }
           );
-          if (apiRes.ok) {
-            const apiJson = (await apiRes.json()) as any[];
-            if (Array.isArray(apiJson)) {
-              const candidates = apiJson
-                .filter(item => item?.slug)
-                .map(item => ({
-                  slug: String(item.slug),
-                  title: String(item.title?.rendered ?? item.title ?? item.slug),
-                }))
-                .map(item => ({ ...item, score: scoreMatch(query, item.title) }))
-                .sort((a, b) => b.score - a.score);
-              if (candidates[0] && candidates[0].score >= 0.35) {
-                animeSlug = candidates[0].slug;
-              }
+          if (Array.isArray(apiJson)) {
+            const candidates = apiJson
+              .filter(item => item?.slug)
+              .map(item => ({
+                slug: String(item.slug),
+                title: String(item.title?.rendered ?? item.title ?? item.slug),
+              }))
+              .map(item => ({ ...item, score: scoreMatch(query, item.title) }))
+              .sort((a, b) => b.score - a.score);
+            if (candidates[0] && candidates[0].score >= 0.35) {
+              animeSlug = candidates[0].slug;
             }
           }
         } catch { /* fallback to HTML */ }
 
         // 2. HTML search fallback
         if (!animeSlug) {
-          // KiraAnime's current search UI renders results through this AJAX
-          // action. The normal /search/ page contains no result anchors until
-          // JavaScript submits the form.
           try {
-            const ajaxRes = await fetchResponse(
+            const payload = await fetchJsonWithBypass<any>(
               `${base}/wp-admin/admin-ajax.php`,
               {
                 method: 'POST',
@@ -105,19 +100,17 @@ async function findSources(titles: string[], epNumber: number): Promise<SourceRe
                   'User-Agent': UA,
                 },
                 body: `action=advanced_search&s_keyword=${encodeURIComponent(query)}`,
-                signal: AbortSignal.timeout(5000),
-              } as RequestInit,
-            );
-            if (ajaxRes.ok) {
-              const payload = await ajaxRes.json() as any;
-              const ajaxHtml = typeof payload?.data === 'string'
-                ? payload.data
-                : typeof payload?.data?.html === 'string'
-                  ? payload.data.html
-                  : '';
-              if (payload?.success && ajaxHtml) {
-                candidateWatchUrl = extractAjaxEpisodeUrl(ajaxHtml, base, query, epNumber);
+                timeoutMs: 6000,
+                bypassTimeoutMs: 30000,
               }
+            );
+            const ajaxHtml = typeof payload?.data === 'string'
+              ? payload.data
+              : typeof payload?.data?.html === 'string'
+                ? payload.data.html
+                : '';
+            if (payload?.success && ajaxHtml) {
+              candidateWatchUrl = extractAjaxEpisodeUrl(ajaxHtml, base, query, epNumber);
             }
           } catch { /* fallback to the rendered search page */ }
         }
@@ -128,13 +121,12 @@ async function findSources(titles: string[], epNumber: number): Promise<SourceRe
             `/?s=${encodeURIComponent(query)}`,
           ];
           for (const path of searchPaths) {
-            const searchRes = await fetchResponse(
+            const searchHtml = await fetchTextWithBypass(
               `${base}${path}`,
-              { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(5000) } as RequestInit,
+              { headers: { 'User-Agent': UA }, timeoutMs: 6000, bypassTimeoutMs: 30000 }
             );
-            if (!searchRes.ok) continue;
+            if (!searchHtml) continue;
 
-            const searchHtml = await searchRes.text();
             const $ = loadHtml(searchHtml);
             $.find('a[href]').each((_: number, el: any) => {
               if (candidateWatchUrl || animeSlug) return;
@@ -155,9 +147,8 @@ async function findSources(titles: string[], epNumber: number): Promise<SourceRe
 
         // 3. Fetch the episode watch page
         const watchUrl = candidateWatchUrl || `${base}/watch/${animeSlug}-episode-${epNumber}/`;
-        const watchRes = await fetchResponse(watchUrl, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(5000) } as RequestInit);
-        if (!watchRes.ok) continue;
-        const watchHtml = await watchRes.text();
+        const watchHtml = await fetchTextWithBypass(watchUrl, { headers: { 'User-Agent': UA }, timeoutMs: 8000, bypassTimeoutMs: 30000 });
+        if (!watchHtml) continue;
         const $ = loadHtml(watchHtml);
 
         const results: SourceResult[] = [];

@@ -14,6 +14,7 @@ import { normalizeQuality, detectSourceType } from '../../utils/scraping/quality
 import { buildSearchQueries, scoreMatch, slugifyTitle } from '../../utils/scraping/title-normalizer.js';
 import type { StreamProvider, SourceOptions, SourceResult } from '../../types/index.js';
 import { fetchResponse, loadHtml } from '../../utils/http/fetch.js';
+import { fetchTextWithBypass } from '../../utils/common/fetch-bypass.js';
 import { resolveAsCdnSource } from './toonstream/embed/as-cdn.js';
 import { resolveRubystmSource, RUBYSTM_ORIGIN } from './toonstream/embed/rubystm.js';
 import { resolveMultiEmbed, detectEmbedLanguage } from './toonstream/embed/multi-embed.js';
@@ -38,16 +39,16 @@ async function tryFetch(
 ): Promise<{ html: string; base: string } | null> {
   try {
     const origin = new URL(target).origin;
-    const res = await fetchResponse(target, {
+    const html = await fetchTextWithBypass(target, {
       headers: {
         'User-Agent': UA,
         Accept: 'text/html',
         Referer: referer ?? `${origin}/`,
       },
-      timeoutMs: 5000,
+      timeoutMs: 8000,
+      bypassTimeoutMs: 30000,
     });
-    if (!res.ok) return null;
-    const html = await res.text();
+    if (!html) return null;
     const looksValid =
       html.length > 200 &&
       /\/series\/|\/episode\/|entry-title|<iframe|embed|jwplayer|Video|aa-options|aa-tbs/i.test(html);

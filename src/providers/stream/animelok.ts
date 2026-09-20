@@ -25,7 +25,8 @@ import { buildSearchQueries } from '../../utils/scraping/title-normalizer.js';
 import { getLanguageCode, normalizeLangCode } from '../../utils/scraping/language.js';
 import type { StreamProvider, SourceOptions, SourceResult, SubtitleTrack } from '../../types/index.js';
 
-import { fetchResponse } from '../../utils/http/fetch.js';
+import { fetchResponse, loadHtml } from '../../utils/http/fetch.js';
+import { fetchTextWithBypass, fetchJsonWithBypass } from '../../utils/common/fetch-bypass.js';
 
 const BASE = 'https://animelok.live';
 const ANILIST_GRAPHQL = 'https://graphql.anilist.co';
@@ -75,7 +76,7 @@ const LANG_PRIORITY = ['JAPANESE', 'ENGLISH', 'HINDI', 'TAMIL', 'TELUGU', 'MALAY
 
 async function apiGet(url: string, referer: string = `${BASE}/home`): Promise<EpisodeResponse | null> {
   try {
-    const res = await fetchResponse(url, {
+    const data = await fetchJsonWithBypass<EpisodeResponse>(url, {
       headers: {
         'User-Agent': UA,
         Accept: 'application/json, text/plain, */*',
@@ -85,21 +86,10 @@ async function apiGet(url: string, referer: string = `${BASE}/home`): Promise<Ep
         'X-Requested-With': 'XMLHttpRequest',
         Cookie: COMPAT_COOKIE,
       },
-      signal: AbortSignal.timeout(12000),
-    } as RequestInit);
-    if (!res.ok) return null;
-    const text = await res.text();
-    const trimmed = text.trim();
-    if (!trimmed) return null;
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      try { return JSON.parse(trimmed); } catch { /* fall through */ }
-    }
-    const fb = trimmed.indexOf('{');
-    const lb = trimmed.lastIndexOf('}');
-    if (fb !== -1 && lb !== -1 && lb > fb) {
-      try { return JSON.parse(trimmed.substring(fb, lb + 1)); } catch { /* ignore */ }
-    }
-    return null;
+      timeoutMs: 12000,
+      bypassTimeoutMs: 30000,
+    });
+    return data;
   } catch {
     return null;
   }

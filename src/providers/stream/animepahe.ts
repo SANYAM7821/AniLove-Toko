@@ -3,30 +3,14 @@ import { buildSearchQueries } from '../../utils/scraping/title-normalizer.js';
 import type { StreamProvider, SourceOptions, SourceResult } from '../../types/index.js';
 
 import { fetchResponse } from '../../utils/http/fetch.js';
+import { fetchJsonWithBypass, fetchTextWithBypass } from '../../utils/common/fetch-bypass.js';
 
 // animepahe.com now 30x-redirects to a rotating mirror (animepahe.pw, .ru, .ac).
-// The extension worker follows redirects but some mirrors reject requests
-// without a browser UA, so we try the canonical domain first then mirrors.
-// `.su` is the mirror `.ru` currently redirects to; it is listed so the provider
-// recovers on its own if the DDoS-Guard interstitial there is ever lifted.
-// animepahe rotates official domains; the site's own banner (checked 2026-08)
-// currently names animepahe.pw / .com / .org as the only real ones, and .pw
-// answers. Lead with .pw; the rest remain as redirect/failover targets.
+// ...
 const BASE_URLS = ['https://animepahe.pw', 'https://animepahe.org', 'https://animepahe.com', 'https://animepahe.ru', 'https://animepahe.su', 'https://animepahe.is', 'https://animepahe.io'];
 
 /**
- * Circuit breaker for the whole mirror set — same reasoning as watchanimeworld.
- *
- * Measured: every mirror is unusable. `.ru` 301s to `animepahe.su`, and `.su`
- * answers `/api?m=search` with a DDoS-Guard JS challenge rather than JSON, so no
- * base can return a result no matter what we ask for. Each `apiGetJson` round
- * still costs the full 4s abort, and `single()` ran one per search query, which
- * exhausted the provider's 15s budget and reported `timeout`.
- *
- * A timeout costs far more than an empty result: it holds a slot in the runner's
- * concurrency pool for the entire deadline, delaying providers that do work. So
- * after two consecutive all-mirrors-failed rounds, stop trying for a while; the
- * breaker reopens on the next TTL expiry in case a mirror comes back.
+ * ...
  */
 const BREAKER_TTL_MS = 5 * 60 * 1000;
 const BREAKER_THRESHOLD = 2;
@@ -69,30 +53,28 @@ function headersFor(base: string, path = '/'): Record<string, string> {
 
 /**
  * GET a JSON API path across the known animepahe mirrors, returning the first
- * successful JSON body. Mirrors occasionally 5xx or rotate; this keeps the
- * provider resilient without forcing the worker to chase redirects.
+ * successful JSON body. Switch to sequential bypass-aware fetches to avoid
+ * crashing the server with multiple concurrent browser solves.
  */
 async function apiGetJson<T>(path: string): Promise<T | null> {
   if (Date.now() < breakerOpenUntil) return null;
 
-  const settled = await Promise.allSettled(
-    BASE_URLS.map(async (base) => {
-      const res = await fetchResponse(`${base}${path}`, {
+  for (const base of BASE_URLS) {
+    try {
+      const data = await fetchJsonWithBypass<T>(`${base}${path}`, {
         headers: headersFor(base, path.split('?')[0]),
-        timeoutMs: 4000,
+        timeoutMs: 6000,
+        bypassTimeoutMs: 30000,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      if (!text) throw new Error('empty');
-      return JSON.parse(text) as T;
-    }),
-  );
-  for (const attempt of settled) {
-    if (attempt.status === 'fulfilled') {
-      consecutiveFailures = 0;
-      return attempt.value;
+      if (data) {
+        consecutiveFailures = 0;
+        return data;
+      }
+    } catch {
+      continue;
     }
   }
+
   if (++consecutiveFailures >= BREAKER_THRESHOLD) {
     breakerOpenUntil = Date.now() + BREAKER_TTL_MS;
     consecutiveFailures = 0;
@@ -115,14 +97,15 @@ async function getEpisodes(animeSession: string, page = 1): Promise<AnimePaheEpi
 }
 
 async function getEpisodeSources(animeSession: string, epSession: string): Promise<AnimePaheSource[]> {
-  const settled = await Promise.allSettled(
-    BASE_URLS.map(async (base) => {
-      const res = await fetchResponse(`${base}/play/${animeSession}/${epSession}`, {
+  for (const base of BASE_URLS) {
+    try {
+      const html = await fetchTextWithBypass(`${base}/play/${animeSession}/${epSession}`, {
         headers: headersFor(base, `/anime/${animeSession}`),
-        timeoutMs: 4000,
+        timeoutMs: 6000,
+        bypassTimeoutMs: 30000,
       });
-      if (!res.ok) throw new Error('not ok');
-      const html = await res.text();
+      if (!html) continue;
+
       const sources: AnimePaheSource[] = [];
       const seen = new Set<string>();
       const re = /https?:\/\/(kwik\.[a-z]+|pahe\.win|kwik\.cx)\/e\/[A-Za-z0-9_-]+/gi;
@@ -133,12 +116,10 @@ async function getEpisodeSources(animeSession: string, epSession: string): Promi
         seen.add(u);
         sources.push({ kwik: u, quality: 'auto', audio: 'japanese' });
       }
-      if (sources.length === 0) throw new Error('no sources');
-      return sources;
-    }),
-  );
-  for (const attempt of settled) {
-    if (attempt.status === 'fulfilled') return attempt.value;
+      if (sources.length > 0) return sources;
+    } catch {
+      continue;
+    }
   }
   return [];
 }
