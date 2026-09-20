@@ -7,5 +7,3 @@ dist
 *.zip
 *.png
 README.md
-build.ts
-tsconfig.json
